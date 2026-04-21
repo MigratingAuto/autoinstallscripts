@@ -1,7 +1,7 @@
-To move the following files I reccomned using SCP
+To move the following files I recommend using SCP
 
-for password based authenatcation
+for password based authentication
 scp /path/to/local/file.txt user@192.168.1.10:/home/user/
 
-for ssh key authenatcation
+for ssh key authentication
 scp -i ~/.ssh/id_rsa file.txt user@192.168.1.10:/home/user/
