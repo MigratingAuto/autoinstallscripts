@@ -87,7 +87,32 @@ sudo apt install -y net-tools qemu-guest-agent openssh-server ufw curl ca-certif
 # ----------------------------------------------------------------------
 echo ""
 echo "[3/8] Enabling qemu-guest-agent service..."
-sudo systemctl enable --now qemu-guest-agent
+
+# On modern Debian/Ubuntu, qemu-guest-agent is started by a udev rule
+# when the virtio-serial device appears. The unit itself has no [Install]
+# section, so 'systemctl enable' returns non-zero -- which would kill the
+# script under 'set -e'. We try to enable it (harmless on older systems
+# that DO have [Install]) but don't fail if it can't be enabled.
+if sudo systemctl enable qemu-guest-agent 2>/dev/null; then
+    echo "  -> qemu-guest-agent enabled via systemd"
+else
+    echo "  -> qemu-guest-agent has no [Install] section (expected on modern Debian/Ubuntu)"
+    echo "  -> It will be started automatically by udev when the virtio device appears"
+fi
+
+# Try to start it now if the virtio device is already present
+# (i.e., QEMU Guest Agent is already enabled in Proxmox for this VM).
+if [[ -e /dev/virtio-ports/org.qemu.guest_agent.0 ]]; then
+    sudo systemctl start qemu-guest-agent || true
+    if systemctl is-active --quiet qemu-guest-agent; then
+        echo "  -> qemu-guest-agent is running"
+    else
+        echo "  !! qemu-guest-agent did not start -- check 'systemctl status qemu-guest-agent'"
+    fi
+else
+    echo "  -> virtio-serial device not present yet"
+    echo "  -> Enable QEMU Guest Agent in Proxmox (VM -> Options) and power-cycle the VM"
+fi
 
 # ----------------------------------------------------------------------
 # Step 4: Enable and start sshd
@@ -135,13 +160,30 @@ fi
 # ----------------------------------------------------------------------
 echo ""
 echo "[6/8] Loading virtio_balloon kernel module..."
-sudo modprobe virtio_balloon
+
+# Check if the module is already loaded (or built into the kernel).
+# Some Proxmox guest kernels build virtio_balloon in rather than as a
+# loadable module, in which case modprobe will fail under 'set -e'.
+if lsmod | grep -q '^virtio_balloon'; then
+    echo "  -> virtio_balloon already loaded"
+elif sudo modprobe virtio_balloon 2>/dev/null; then
+    echo "  -> virtio_balloon loaded"
+else
+    # Module is either built-in (already active) or genuinely unavailable.
+    # Check /proc/modules and /sys to figure out which.
+    if [[ -d /sys/module/virtio_balloon ]]; then
+        echo "  -> virtio_balloon is built into the kernel (no module to load)"
+    else
+        echo "  !! WARNING: virtio_balloon could not be loaded and is not built-in"
+        echo "  !! Proxmox memory ballooning may not work for this VM"
+    fi
+fi
 
 # Make it persistent across reboots.
 # Debian/Ubuntu support BOTH /etc/modules (legacy) and /etc/modules-load.d/ (modern).
 # Using the modern systemd-style location for consistency with other distros.
 echo "virtio_balloon" | sudo tee /etc/modules-load.d/virtio_balloon.conf >/dev/null
-echo "  -> virtio_balloon will auto-load at boot"
+echo "  -> virtio_balloon will auto-load at boot (if not built-in)"
 
 # ----------------------------------------------------------------------
 # Step 7: Pull SSH public keys from GitHub

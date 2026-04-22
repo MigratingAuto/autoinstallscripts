@@ -8,7 +8,7 @@ Both scripts perform the same core tasks, adapted to their respective package ma
 
 1. Update and upgrade all system packages
 2. Install `net-tools` and `qemu-guest-agent` for Proxmox integration
-3. Enable the QEMU guest agent service (for graceful shutdowns, IP reporting, snapshot freeze/thaw)
+3. Enable (or verify) the QEMU guest agent service for graceful shutdowns, IP reporting, and snapshot freeze/thaw. On modern Debian/Ubuntu the agent is activated by a udev rule rather than a traditional systemd unit, and the script handles both cases.
 4. Install and enable `openssh-server`
 5. Configure the firewall to allow SSH
 6. Load the `virtio_balloon` kernel module (for Proxmox memory ballooning)
@@ -33,6 +33,7 @@ Before running either script:
 - For Proxmox guests: the QEMU Guest Agent should also be enabled on the VM in Proxmox
   - **VM → Options → QEMU Guest Agent → Enable**
   - Then **fully power-cycle** the VM (not just reboot) for the change to take effect
+  - If you forget this step, the script will detect that the virtio-serial device is missing and print a reminder rather than failing — but the agent won't actually run until you enable it and power-cycle
 
 ## Quick Start
 
@@ -92,12 +93,14 @@ The scripts disable SSH password authentication as their final step, so a wrong 
 
 Both scripts include the following safeguards:
 
-- **`set -euo pipefail`** — Strict bash mode. The script aborts on any error, undefined variable, or failed pipe.
+- **`set -euo pipefail`** — Strict bash mode. The script aborts on any unexpected error, undefined variable, or failed pipe. Steps that are *expected* to occasionally exit non-zero in normal operation (e.g., enabling a unit that has no `[Install]` section, or modprobing a module that's built into the kernel) are wrapped so they don't kill the script.
 - **GitHub key validation** — Keys are downloaded to a temp file and validated before replacing `authorized_keys`. The script checks that the file is non-empty and contains valid SSH key formats (`ssh-rsa`, `ssh-ed25519`, `ecdsa-sha2-*`).
 - **SSH hardening gate** — If the GitHub key pull fails for any reason, the SSH hardening step is automatically **skipped**. Password authentication stays enabled so you don't get locked out.
 - **`sshd -t` config validation** — The drop-in SSH config is syntax-checked before sshd is restarted. If validation fails, the drop-in file is removed and the original config is preserved.
 - **Sudo user detection** — Detects the actual user via `SUDO_USER` (not `$HOME`, which would resolve to `/root` under sudo) so SSH keys land in the correct user's home directory.
 - **Idempotent firewall checks** — Re-running the script won't create duplicate firewall rules.
+- **QEMU guest agent compatibility** — Handles both the legacy systemd-enabled unit (older Debian, current Fedora) and the newer udev-triggered activation (modern Debian/Ubuntu). The script also detects whether the virtio-serial device is present and only attempts to start the agent if it can actually run.
+- **virtio_balloon kernel handling** — Detects whether the module is already loaded, loadable, or built directly into the kernel, and behaves correctly in all three cases instead of failing on built-in kernels.
 
 ## Customization
 
@@ -153,6 +156,19 @@ Then in Proxmox: **VM → More → Convert to template**.
 - Verify the agent is running on the VM: `systemctl status qemu-guest-agent`
 - Verify it's enabled in Proxmox: **VM → Options → QEMU Guest Agent**
 - A full power-cycle (not reboot) is required after enabling in Proxmox.
+- Confirm the virtio-serial device exists on the guest: `ls -l /dev/virtio-ports/org.qemu.guest_agent.0`. If this file is missing, the agent has nothing to talk to and won't start — this almost always means the agent isn't enabled in Proxmox or the VM hasn't been power-cycled since enabling it.
+
+### Script output: "virtio-serial device not present yet"
+
+This is the script telling you the QEMU Guest Agent option hasn't been enabled in Proxmox (or the VM hasn't been power-cycled since enabling it). The script continues normally — once you flip the toggle in Proxmox and power-cycle the VM, the agent will start automatically via udev. No need to re-run the script for this.
+
+### Script output: "qemu-guest-agent has no [Install] section"
+
+This is **expected and harmless** on modern Debian and Ubuntu. The packaged unit relies on udev activation rather than `systemctl enable`, so this message just means the script gracefully detected that and skipped the unnecessary enable step.
+
+### Script output: "virtio_balloon is built into the kernel"
+
+Also expected and harmless. Some kernels (especially custom or stripped-down builds) compile virtio_balloon directly into the kernel image rather than as a loadable module. The functionality is still present — there's just nothing to `modprobe`.
 
 ## Documentation Links
 
