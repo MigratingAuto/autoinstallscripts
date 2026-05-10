@@ -32,7 +32,7 @@ set -euo pipefail  # Exit on error, undefined var, or pipe failure
 # ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
-GITHUB_USER="migratingauto"
+read -rp "Enter your GitHub username: " GITHUB_USER
 GITHUB_KEYS_URL="https://github.com/${GITHUB_USER}.keys"
 
 # Determine the target user (the user who invoked sudo, or current user)

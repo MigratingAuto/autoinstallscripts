@@ -32,7 +32,7 @@ set -euo pipefail  # Exit on error, undefined var, or pipe failure
 # ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
-GITHUB_USER="migratingauto"
+read -rp "Enter your GitHub username: " GITHUB_USER
 GITHUB_KEYS_URL="https://github.com/${GITHUB_USER}.keys"
 
 # Non-interactive apt - prevents prompts during package install/upgrade
