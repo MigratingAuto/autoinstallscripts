@@ -12,7 +12,7 @@ Both scripts perform the same core tasks, adapted to their respective package ma
 4. Install and enable `openssh-server`
 5. Configure the firewall to allow SSH
 6. Load the `virtio_balloon` kernel module (for Proxmox memory ballooning)
-7. Pull SSH public keys from GitHub (user: `migratingauto`)
+7. Pull SSH public keys from GitHub (prompts for your GitHub username at startup)
 8. Harden SSH by disabling password authentication
 
 ## Available Scripts
@@ -28,7 +28,7 @@ Before running either script:
 
 - A fresh VM with the target OS installed and network connectivity
 - A regular user account with `sudo` privileges (do **not** run as root directly)
-- SSH public keys published on your GitHub profile at `https://github.com/migratingauto.keys`
+- SSH public keys published on your GitHub profile at `https://github.com/<your-username>.keys`
   - To add keys: GitHub → Settings → SSH and GPG keys → New SSH key
 - For Proxmox guests: the QEMU Guest Agent should also be enabled on the VM in Proxmox
   - **VM → Options → QEMU Guest Agent → Enable**
@@ -65,7 +65,7 @@ sudo ./bootstrap.sh
 The scripts disable SSH password authentication as their final step, so a wrong move could lock you out of the VM. Follow this order to stay safe:
 
 1. **Verify your GitHub keys are published:**
-   Open `https://github.com/migratingauto.keys` in a browser. You should see plain-text key data. If the page is empty, add keys to your GitHub account first.
+   Open `https://github.com/<your-username>.keys` in a browser. You should see plain-text key data. If the page is empty, add keys to your GitHub account first.
 
 2. **Have a fallback console open:**
    Keep the Proxmox VM console (noVNC) open in another tab. If SSH breaks, you can still get in.
@@ -104,13 +104,15 @@ Both scripts include the following safeguards:
 
 ## Customization
 
-### Change the GitHub username
+### GitHub username
 
-Both scripts read keys from a hardcoded GitHub user. To use a different account, edit the `GITHUB_USER` variable near the top of the script:
+Both scripts prompt for your GitHub username at startup:
 
-```bash
-GITHUB_USER="your-github-username"
 ```
+Enter your GitHub username:
+```
+
+Your public SSH keys are then fetched from `https://github.com/<username>.keys` and written to `~/.ssh/authorized_keys`.
 
 ### Skip SSH hardening
 
@@ -136,7 +138,7 @@ Then in Proxmox: **VM → More → Convert to template**.
 ### "Failed to fetch keys from GitHub"
 
 - Check internet connectivity from the VM: `curl -I https://github.com`
-- Confirm the GitHub user has public SSH keys: `curl https://github.com/migratingauto.keys`
+- Confirm the GitHub user has public SSH keys: `curl https://github.com/<your-username>.keys`
 - Check DNS: `nslookup github.com`
 
 ### "sshd config validation failed"
