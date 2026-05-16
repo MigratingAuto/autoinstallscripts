@@ -1,0 +1,213 @@
+# autoinstallscripts — Testing
+
+Test copies of the Linux bootstrap scripts. Use these to validate changes before updating the production scripts in the parent directory.
+
+## What the Scripts Do
+
+Both scripts perform the same core tasks as their production counterparts, adapted to their respective package manager and distro conventions:
+
+1. Update and upgrade all system packages
+2. Install `net-tools` and `qemu-guest-agent` for Proxmox integration
+3. Enable (or verify) the QEMU guest agent service for graceful shutdowns, IP reporting, and snapshot freeze/thaw. On modern Debian/Ubuntu the agent is activated by a udev rule rather than a traditional systemd unit, and the script handles both cases.
+4. Install and enable `openssh-server`
+5. Configure the firewall to allow SSH
+6. Load the `virtio_balloon` kernel module (for Proxmox memory ballooning)
+7. Pull SSH public keys from GitHub (prompts for your GitHub username at startup)
+8. Harden SSH by disabling password authentication
+9. Optionally install Docker Engine (prompted at startup — installs the official Docker CE packages, adds the target user to the `docker` group, and enables the Docker service)
+
+## Available Scripts
+
+| Script | Target OS | Package Manager | Firewall |
+|--------|-----------|-----------------|----------|
+| [`testing/auto_install_upgrade_server_fedora_test.sh`](auto_install_upgrade_server_fedora_test.sh) | Fedora (latest) | `dnf` | `firewalld` |
+| [`testing/auto_install_upgrade_server_debian_test.sh`](auto_install_upgrade_server_debian_test.sh) | Debian 12+ / Ubuntu 22.04+ | `apt` | `ufw` |
+
+## Prerequisites
+
+Before running either script:
+
+- A fresh VM with the target OS installed and network connectivity
+- A regular user account with `sudo` privileges (do **not** run as root directly)
+- SSH public keys published on your GitHub profile at `https://github.com/<your-username>.keys`
+  - To add keys: GitHub → Settings → SSH and GPG keys → New SSH key
+- For Proxmox guests: the QEMU Guest Agent should also be enabled on the VM in Proxmox
+  - **VM → Options → QEMU Guest Agent → Enable**
+  - Then **fully power-cycle** the VM (not just reboot) for the change to take effect
+  - If you forget this step, the script will detect that the virtio-serial device is missing and print a reminder rather than failing — but the agent won't actually run until you enable it and power-cycle
+
+## Quick Start
+
+### Fedora
+
+```bash
+curl -fsSL -o bootstrap_test.sh \
+  https://raw.githubusercontent.com/migratingauto/autoinstallscripts/main/Linux/testing/auto_install_upgrade_server_fedora_test.sh
+chmod +x bootstrap_test.sh
+sudo ./bootstrap_test.sh
+```
+
+### Debian / Ubuntu
+
+```bash
+curl -fsSL -o bootstrap_test.sh \
+  https://raw.githubusercontent.com/migratingauto/autoinstallscripts/main/Linux/testing/auto_install_upgrade_server_debian_test.sh
+chmod +x bootstrap_test.sh
+sudo ./bootstrap_test.sh
+```
+
+> **Note:** On minimal Debian installs, `curl` may not be present by default. If `curl` is missing, install it first with `sudo apt install -y curl` or substitute `wget`:
+> ```bash
+> wget -O bootstrap_test.sh https://raw.githubusercontent.com/migratingauto/autoinstallscripts/main/Linux/testing/auto_install_upgrade_server_debian_test.sh
+> ```
+
+## Recommended Workflow
+
+The scripts disable SSH password authentication as their final step, so a wrong move could lock you out of the VM. Follow this order to stay safe:
+
+1. **Verify your GitHub keys are published:**
+   Open `https://github.com/<your-username>.keys` in a browser. You should see plain-text key data. If the page is empty, add keys to your GitHub account first.
+
+2. **Have a fallback console open:**
+   Keep the Proxmox VM console (noVNC) open in another tab. If SSH breaks, you can still get in.
+
+3. **Download and review the script:**
+   ```bash
+   curl -fsSL -o bootstrap_test.sh https://raw.githubusercontent.com/migratingauto/autoinstallscripts/main/Linux/testing/auto_install_upgrade_server_fedora_test.sh
+   less bootstrap_test.sh
+   ```
+   Always inspect scripts pulled from the internet before running them with `sudo`.
+
+4. **Run the script:**
+   ```bash
+   chmod +x bootstrap_test.sh
+   sudo ./bootstrap_test.sh
+   ```
+
+5. **Test SSH from another terminal BEFORE closing the current session:**
+   ```bash
+   ssh user@<vm-ip>
+   ```
+   If key-based login works, you're done. If not, you still have the original session and the Proxmox console as fallbacks.
+
+## Safety Features
+
+Both scripts include the following safeguards:
+
+- **`set -euo pipefail`** — Strict bash mode. The script aborts on any unexpected error, undefined variable, or failed pipe. Steps that are *expected* to occasionally exit non-zero in normal operation (e.g., enabling a unit that has no `[Install]` section, or modprobing a module that's built into the kernel) are wrapped so they don't kill the script.
+- **GitHub key validation** — Keys are downloaded to a temp file and validated before replacing `authorized_keys`. The script checks that the file is non-empty and contains valid SSH key formats (`ssh-rsa`, `ssh-ed25519`, `ecdsa-sha2-*`).
+- **SSH hardening gate** — If the GitHub key pull fails for any reason, the SSH hardening step is automatically **skipped**. Password authentication stays enabled so you don't get locked out.
+- **`sshd -t` config validation** — The drop-in SSH config is syntax-checked before sshd is restarted. If validation fails, the drop-in file is removed and the original config is preserved.
+- **Sudo user detection** — Detects the actual user via `SUDO_USER` (not `$HOME`, which would resolve to `/root` under sudo) so SSH keys land in the correct user's home directory.
+- **Idempotent firewall checks** — Re-running the script won't create duplicate firewall rules.
+- **QEMU guest agent compatibility** — Handles both the legacy systemd-enabled unit (older Debian, current Fedora) and the newer udev-triggered activation (modern Debian/Ubuntu). The script also detects whether the virtio-serial device is present and only attempts to start the agent if it can actually run.
+- **virtio_balloon kernel handling** — Detects whether the module is already loaded, loadable, or built directly into the kernel, and behaves correctly in all three cases instead of failing on built-in kernels.
+
+## Customization
+
+### GitHub username
+
+Both scripts prompt for your GitHub username at startup:
+
+```
+Enter your GitHub username:
+```
+
+Your public SSH keys are then fetched from `https://github.com/<username>.keys` and written to `~/.ssh/authorized_keys`.
+
+### Docker Engine
+
+At startup the script asks:
+
+```
+Install Docker Engine? [y/N]:
+```
+
+Answering `y` installs the official Docker CE packages from Docker's repository, enables the Docker service, and adds the target user to the `docker` group (a re-login is required for the group membership to take effect). Answering `N` (or pressing Enter) skips Docker entirely.
+
+### Skip SSH hardening
+
+If you want to keep password auth enabled (e.g., for shared development VMs), comment out or remove the entire **Step 8: Harden SSH configuration** block.
+
+### Use as a Proxmox VM template
+
+Both scripts include a commented-out **TEMPLATE PREP** section near the bottom. If you plan to convert the VM to a Proxmox template that gets cloned, uncomment that block before running the script. It installs a one-shot systemd service that regenerates SSH host keys on first boot of each clone — preventing every clone from sharing the same host keys.
+
+After running the script with template prep enabled:
+
+```bash
+# Final cleanup before converting to template:
+sudo rm -f /etc/ssh/ssh_host_*
+sudo cloud-init clean  # if using cloud-init
+sudo shutdown -h now
+```
+
+Then in Proxmox: **VM → More → Convert to template**.
+
+## Troubleshooting
+
+### "Failed to fetch keys from GitHub"
+
+- Check internet connectivity from the VM: `curl -I https://github.com`
+- Confirm the GitHub user has public SSH keys: `curl https://github.com/<your-username>.keys`
+- Check DNS: `nslookup github.com`
+
+### "sshd config validation failed"
+
+- The script removes the bad config automatically and exits. SSH will continue working with the previous config.
+- Run `sudo sshd -t` manually to see the specific error.
+- Inspect the file the script tried to create: `sudo cat /etc/ssh/sshd_config.d/99-hardening.conf` (if it still exists).
+
+### Locked out after running
+
+- Connect via the Proxmox VM console (noVNC).
+- Re-enable password auth temporarily: `sudo rm /etc/ssh/sshd_config.d/99-hardening.conf && sudo systemctl restart ssh` (or `sshd` on Fedora).
+- Investigate why your SSH keys aren't working before re-hardening.
+
+### QEMU Guest Agent not reporting in Proxmox
+
+- Verify the agent is running on the VM: `systemctl status qemu-guest-agent`
+- Verify it's enabled in Proxmox: **VM → Options → QEMU Guest Agent**
+- A full power-cycle (not reboot) is required after enabling in Proxmox.
+- Confirm the virtio-serial device exists on the guest: `ls -l /dev/virtio-ports/org.qemu.guest_agent.0`. If this file is missing, the agent has nothing to talk to and won't start — this almost always means the agent isn't enabled in Proxmox or the VM hasn't been power-cycled since enabling it.
+
+### Script output: "virtio-serial device not present yet"
+
+This is the script telling you the QEMU Guest Agent option hasn't been enabled in Proxmox (or the VM hasn't been power-cycled since enabling it). The script continues normally — once you flip the toggle in Proxmox and power-cycle the VM, the agent will start automatically via udev. No need to re-run the script for this.
+
+### Script output: "qemu-guest-agent has no [Install] section"
+
+This is **expected and harmless** on modern Debian and Ubuntu. The packaged unit relies on udev activation rather than `systemctl enable`, so this message just means the script gracefully detected that and skipped the unnecessary enable step.
+
+### Script output: "virtio_balloon is built into the kernel"
+
+Also expected and harmless. Some kernels (especially custom or stripped-down builds) compile virtio_balloon directly into the kernel image rather than as a loadable module. The functionality is still present — there's just nothing to `modprobe`.
+
+## Documentation Links
+
+- [Proxmox QEMU Guest Agent](https://pve.proxmox.com/wiki/Qemu-guest-agent)
+- [Fedora dnf documentation](https://docs.fedoraproject.org/en-US/quick-docs/dnf/)
+- [Debian apt documentation](https://wiki.debian.org/Apt)
+- [systemd modules-load.d](https://www.freedesktop.org/software/systemd/man/modules-load.d.html)
+- [sshd_config man page](https://man.openbsd.org/sshd_config)
+- [firewalld documentation](https://firewalld.org/documentation/)
+- [Ubuntu ufw documentation](https://help.ubuntu.com/community/UFW)
+- [GitHub: Accessing public SSH keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/about-ssh)
+
+## Repo Structure
+
+```
+autoinstallscripts/
+├── README.md
+└── Linux/
+    ├── auto_install_upgrade_server_fedora.sh
+    ├── auto_install_upgrade_server_debian.sh
+    └── testing/
+        ├── README.md
+        ├── auto_install_upgrade_server_fedora_test.sh
+        └── auto_install_upgrade_server_debian_test.sh
+```
+
+## License
+
+Use these however you like. No warranty — review before running, especially anything that touches SSH config.
