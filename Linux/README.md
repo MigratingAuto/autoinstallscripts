@@ -35,6 +35,46 @@ Before running either script:
   - Then **fully power-cycle** the VM (not just reboot) for the change to take effect
   - If you forget this step, the script will detect that the virtio-serial device is missing and print a reminder rather than failing — but the agent won't actually run until you enable it and power-cycle
 
+## Getting SSH Access First (No Copy-Paste)
+
+If you're on the Proxmox noVNC console and can't paste anything, use these short commands to get SSH running so you can then SSH in from a real terminal and paste the full bootstrap script.
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install -y openssh-server
+sudo systemctl enable --now ssh
+sudo ufw allow ssh
+sudo ufw enable
+```
+
+### Fedora
+
+```bash
+sudo dnf install -y openssh-server
+sudo systemctl enable --now sshd
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --reload
+```
+
+After running those, find the VM's IP address:
+
+```bash
+ip a
+```
+
+Then SSH in from your normal machine:
+
+```bash
+ssh user@<vm-ip>
+```
+
+Once you're in, copy and paste the Quick Start commands below as usual.
+
+> **Note:** Fresh installs allow password login by default. The bootstrap script will disable it and switch to key-based auth — so run it once you're in.
+
+---
+
 ## Quick Start
 
 ### Fedora
