@@ -14,6 +14,7 @@ Both scripts perform the same core tasks, adapted to their respective package ma
 6. Load the `virtio_balloon` kernel module (for Proxmox memory ballooning)
 7. Pull SSH public keys from GitHub (prompts for your GitHub username at startup)
 8. Harden SSH by disabling password authentication
+9. Optionally install Docker Engine (prompted at startup — installs the official Docker CE packages, adds the target user to the `docker` group, and enables the Docker service)
 
 ## Available Scripts
 
@@ -154,6 +155,16 @@ Enter your GitHub username:
 
 Your public SSH keys are then fetched from `https://github.com/<username>.keys` and written to `~/.ssh/authorized_keys`.
 
+### Docker Engine
+
+At startup the script asks:
+
+```
+Install Docker Engine? [y/N]:
+```
+
+Answering `y` installs the official Docker CE packages from Docker's repository, enables the Docker service, and adds the target user to the `docker` group (a re-login is required for the group membership to take effect). Answering `N` (or pressing Enter) skips Docker entirely.
+
 ### Skip SSH hardening
 
 If you want to keep password auth enabled (e.g., for shared development VMs), comment out or remove the entire **Step 8: Harden SSH configuration** block.
@@ -230,7 +241,11 @@ autoinstallscripts/
 ├── README.md
 └── Linux/
     ├── auto_install_upgrade_server_fedora.sh
-    └── auto_install_upgrade_server_debian.sh
+    ├── auto_install_upgrade_server_debian.sh
+    └── testing/
+        ├── README.md
+        ├── auto_install_upgrade_server_fedora_test.sh
+        └── auto_install_upgrade_server_debian_test.sh
 ```
 
 ## License

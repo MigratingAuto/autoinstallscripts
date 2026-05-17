@@ -35,6 +35,12 @@ set -euo pipefail  # Exit on error, undefined var, or pipe failure
 read -rp "Enter your GitHub username: " GITHUB_USER
 GITHUB_KEYS_URL="https://github.com/${GITHUB_USER}.keys"
 
+read -rp "Install Docker Engine? [y/N]: " INSTALL_DOCKER_INPUT
+INSTALL_DOCKER=false
+if [[ "${INSTALL_DOCKER_INPUT,,}" == "y" || "${INSTALL_DOCKER_INPUT,,}" == "yes" ]]; then
+    INSTALL_DOCKER=true
+fi
+
 # Non-interactive apt - prevents prompts during package install/upgrade
 export DEBIAN_FRONTEND=noninteractive
 
@@ -71,7 +77,7 @@ echo "=========================================="
 # Step 1: Update package index and upgrade all packages
 # ----------------------------------------------------------------------
 echo ""
-echo "[1/8] Updating system packages..."
+echo "[1/9] Updating system packages..."
 sudo apt update
 sudo apt upgrade -y
 
@@ -79,14 +85,14 @@ sudo apt upgrade -y
 # Step 2: Install required packages
 # ----------------------------------------------------------------------
 echo ""
-echo "[2/8] Installing net-tools, qemu-guest-agent, openssh-server, ufw, curl..."
+echo "[2/9] Installing net-tools, qemu-guest-agent, openssh-server, ufw, curl..."
 sudo apt install -y net-tools qemu-guest-agent openssh-server ufw curl ca-certificates
 
 # ----------------------------------------------------------------------
 # Step 3: Enable and start the QEMU guest agent
 # ----------------------------------------------------------------------
 echo ""
-echo "[3/8] Enabling qemu-guest-agent service..."
+echo "[3/9] Enabling qemu-guest-agent service..."
 
 # On modern Debian/Ubuntu, qemu-guest-agent is started by a udev rule
 # when the virtio-serial device appears. The unit itself has no [Install]
@@ -118,7 +124,7 @@ fi
 # Step 4: Enable and start sshd
 # ----------------------------------------------------------------------
 echo ""
-echo "[4/8] Enabling ssh service..."
+echo "[4/9] Enabling ssh service..."
 # Note: On Debian/Ubuntu the service is called 'ssh', not 'sshd'.
 # The 'sshd' alias works on most modern systemd installs but 'ssh' is canonical.
 sudo systemctl enable --now ssh
@@ -135,7 +141,7 @@ echo "  -> ssh is running"
 # Step 5: Configure ufw to allow SSH
 # ----------------------------------------------------------------------
 echo ""
-echo "[5/8] Configuring ufw for SSH..."
+echo "[5/9] Configuring ufw for SSH..."
 
 # Allow SSH BEFORE enabling ufw - critical to avoid being locked out
 # of remote sessions when the firewall activates.
@@ -159,7 +165,7 @@ fi
 # Step 6: Load the virtio_balloon kernel module
 # ----------------------------------------------------------------------
 echo ""
-echo "[6/8] Loading virtio_balloon kernel module..."
+echo "[6/9] Loading virtio_balloon kernel module..."
 
 # Check if the module is already loaded (or built into the kernel).
 # Some Proxmox guest kernels build virtio_balloon in rather than as a
@@ -189,7 +195,7 @@ echo "  -> virtio_balloon will auto-load at boot (if not built-in)"
 # Step 7: Pull SSH public keys from GitHub
 # ----------------------------------------------------------------------
 echo ""
-echo "[7/8] Pulling SSH keys from GitHub user '${GITHUB_USER}'..."
+echo "[7/9] Pulling SSH keys from GitHub user '${GITHUB_USER}'..."
 
 # Ensure .ssh directory exists with correct permissions
 sudo -u "${TARGET_USER}" mkdir -p "${SSH_DIR}"
@@ -227,7 +233,7 @@ fi
 # Step 8: Harden SSH configuration (only if keys were successfully pulled)
 # ----------------------------------------------------------------------
 echo ""
-echo "[8/8] SSH hardening..."
+echo "[8/9] SSH hardening..."
 
 if [[ "${KEYS_PULLED}" == "true" ]]; then
     SSHD_DROPIN="/etc/ssh/sshd_config.d/99-hardening.conf"
@@ -255,6 +261,62 @@ else
     echo "  !! SKIPPED: SSH hardening skipped because keys were not pulled successfully"
     echo "  !! This prevents you from being locked out of the VM"
     echo "  !! Fix the key issue and re-run the script, or harden SSH manually"
+fi
+
+# ----------------------------------------------------------------------
+# Step 9: Install Docker Engine (optional)
+# ----------------------------------------------------------------------
+echo ""
+DOCKER_INSTALLED=false
+if [[ "${INSTALL_DOCKER}" == "true" ]]; then
+    echo "[9/9] Installing Docker Engine..."
+
+    # Remove any conflicting legacy packages
+    for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do
+        sudo apt remove -y "$pkg" 2>/dev/null || true
+    done
+
+    # Add Docker's official GPG key
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+        -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+    # Determine the correct repo codename (Ubuntu uses UBUNTU_CODENAME on newer releases)
+    if [[ "${DISTRO_ID}" == "ubuntu" ]]; then
+        DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+    else
+        DOCKER_CODENAME="${VERSION_CODENAME:-}"
+    fi
+
+    if [[ -z "${DOCKER_CODENAME}" ]]; then
+        echo "  !! ERROR: Could not determine OS codename for Docker repository"
+        echo "  !! Docker installation skipped"
+    else
+        # Add Docker apt repository
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/${DISTRO_ID} ${DOCKER_CODENAME} stable" \
+            | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+        sudo apt update
+        sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+        # Add target user to docker group so they can run docker without sudo
+        sudo usermod -aG docker "${TARGET_USER}"
+        echo "  -> ${TARGET_USER} added to docker group (re-login to apply)"
+
+        # Enable and start Docker service
+        sudo systemctl enable --now docker
+
+        if systemctl is-active --quiet docker; then
+            echo "  -> Docker Engine installed and running"
+            DOCKER_INSTALLED=true
+        else
+            echo "  !! WARNING: Docker service did not start -- check 'systemctl status docker'"
+        fi
+    fi
+else
+    echo "[9/9] Skipping Docker Engine installation"
 fi
 
 # ----------------------------------------------------------------------
@@ -311,6 +373,14 @@ if [[ "${KEYS_PULLED}" == "true" ]]; then
 else
     echo "  - SSH keys: NOT configured (check errors above)"
     echo "  - SSH password authentication: still enabled"
+fi
+if [[ "${DOCKER_INSTALLED}" == "true" ]]; then
+    echo "  - Docker Engine: installed and running"
+    echo "  - ${TARGET_USER} added to docker group (re-login to apply)"
+elif [[ "${INSTALL_DOCKER}" == "true" ]]; then
+    echo "  - Docker Engine: installation attempted but service did not start (check errors above)"
+else
+    echo "  - Docker Engine: not installed"
 fi
 echo ""
 echo "Reminder: Enable the QEMU Guest Agent in Proxmox:"
